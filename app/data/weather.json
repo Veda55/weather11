@@ -1,0 +1,55 @@
+{
+  "last_updated": "2025-11-21T00:31:27.470Z",
+  "cities": {
+    "Delhi": {
+      "temp": 14.1,
+      "feels_like": 13.8,
+      "humidity": 88,
+      "pressure": 1017,
+      "wind": 0,
+      "description": "mist",
+      "icon": "50n"
+    },
+    "Mumbai": {
+      "temp": 24,
+      "feels_like": 23.9,
+      "humidity": 57,
+      "pressure": 1014,
+      "wind": 1.5,
+      "description": "smoke",
+      "icon": "50n"
+    },
+    "Bangalore": {
+      "temp": 18.8,
+      "feels_like": 19.1,
+      "humidity": 92,
+      "pressure": 1015,
+      "wind": 4,
+      "description": "mist",
+      "icon": "50n"
+    },
+    "Chennai": {
+      "temp": 24.3,
+      "feels_like": 25.2,
+      "humidity": 94,
+      "pressure": 1013,
+      "wind": 2.6,
+      "description": "mist",
+      "icon": "50n"
+    },
+    "Hyderabad": {
+      "temp": 17.7,
+      "feels_like": 17.6,
+      "humidity": 77,
+      "pressure": 1017,
+      "wind": 2.1,
+      "description": "mist",
+      "icon": "50n"
+    }
+  },
+  "metadata": {
+    "total_cities": 5,
+    "successful": 5,
+    "failed": 0
+  }
+}
