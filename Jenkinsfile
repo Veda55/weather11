@@ -4,7 +4,7 @@ pipeline {
     environment {
         DOCKER_IMAGE = "vedaj/weather-app"
         DOCKER_CREDENTIALS_ID = "dockerhub-credentials"
-        KUBECONFIG_CREDENTIALS_ID = "kubeconfig-secret"
+        KUBECONFIG_CREDENTIALS_ID = "kubeconfig-jenkins"
         OPENWEATHER_API_KEY_CREDENTIALS_ID = "openweather-api-key"
     }
 
