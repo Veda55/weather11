@@ -1,97 +1,114 @@
 pipeline {
     agent any
-    
+
     environment {
-        DOCKER_IMAGE = 'vedaj/weather-app'
-        DOCKER_REGISTRY = 'docker.io'
-        DOCKER_CREDENTIALS_ID = 'dockerhub-credentials'
-        KUBECONFIG_CREDENTIALS_ID = 'kubeconfig-secret'
-        GIT_COMMIT_SHORT = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
-        IMAGE_TAG = "${env.GIT_COMMIT_SHORT}"
-        OPENWEATHER_API_KEY_CREDENTIALS_ID = 'openweather-api-key'
+        DOCKER_IMAGE = "vedaj/weather-app"
+        DOCKER_REGISTRY = "docker.io"
+        DOCKER_CREDENTIALS_ID = "dockerhub-credentials"
+        KUBECONFIG_CREDENTIALS_ID = "kubeconfig-secret"
+        OPENWEATHER_API_KEY_CREDENTIALS_ID = "openweather-api-key"
     }
-    
+
     stages {
+
+        /* ---------------------- CHECKOUT ---------------------- */
         stage('Checkout') {
             steps {
-                echo 'Checking out source code from repository...'
+                echo "Checking out source code..."
                 checkout scm
-                sh 'git rev-parse HEAD'
+
+                script {
+                    env.GIT_COMMIT_SHORT = sh(
+                        script: "git rev-parse --short HEAD",
+                        returnStdout: true
+                    ).trim()
+
+                    env.IMAGE_TAG = env.GIT_COMMIT_SHORT
+                    echo "IMAGE_TAG generated: ${env.IMAGE_TAG}"
+                }
             }
         }
-        
+
+        /* ---------------------- ENV SETUP ---------------------- */
         stage('Setup Environment') {
             steps {
-                echo 'Setting up Node.js environment...'
+                echo "Checking Node.js version..."
                 dir('app') {
                     sh 'node --version'
                     sh 'npm --version'
                 }
             }
         }
-        
+
+        /* ---------------------- INSTALL DEPENDENCIES ---------------------- */
         stage('Install Dependencies') {
             steps {
-                echo 'Installing Node.js dependencies...'
+                echo "Installing dependencies..."
                 dir('app') {
                     sh 'npm ci'
                 }
             }
         }
-        
+
+        /* ---------------------- RUN TESTS ---------------------- */
         stage('Run Tests') {
             steps {
-                echo 'Running Jest tests...'
+                echo "Running Jest tests..."
                 dir('app') {
                     sh 'npm test || true'
                 }
             }
             post {
                 always {
-                    echo 'Test execution completed'
                     junit testResults: 'app/coverage/*.xml', allowEmptyResults: true
                 }
             }
         }
-        
+
+        /* ---------------------- REFRESH WEATHER CACHE ---------------------- */
         stage('Refresh Weather Dataset') {
             steps {
-                echo 'Refreshing weather dataset with live data...'
+                echo "Refreshing weather dataset..."
                 dir('app') {
-                    withCredentials([string(credentialsId: "${OPENWEATHER_API_KEY_CREDENTIALS_ID}", variable: 'OPENWEATHER_API_KEY')]) {
+                    withCredentials([string(credentialsId: OPENWEATHER_API_KEY_CREDENTIALS_ID, variable: 'OPENWEATHER_API_KEY')]) {
+
                         script {
                             sh '''
                                 echo "OPENWEATHER_API_KEY=${OPENWEATHER_API_KEY}" > .env
                                 echo "PORT=3000" >> .env
+
                                 node -e "
                                     const axios = require('axios');
                                     const fs = require('fs');
-                                    const cities = ['Delhi', 'Mumbai', 'Bangalore', 'Chennai', 'Hyderabad'];
+                                    const cities = ['Delhi','Mumbai','Bangalore','Chennai','Hyderabad'];
                                     const API_KEY = process.env.OPENWEATHER_API_KEY;
-                                    
-                                    async function fetchWeather() {
+
+                                    async function fetch() {
                                         const results = await Promise.all(
                                             cities.map(city =>
-                                                axios.get('https://api.openweathermap.org/data/2.5/weather', {
-                                                    params: { q: city, appid: API_KEY, units: 'metric' }
-                                                })
-                                                .then(res => ({
+                                                axios.get(
+                                                    'https://api.openweathermap.org/data/2.5/weather',
+                                                    { params: { q: city, appid: API_KEY, units: 'metric' } }
+                                                )
+                                                .then(r => ({
                                                     [city]: {
-                                                        temp: Math.round(res.data.main.temp * 10) / 10,
-                                                        feels_like: Math.round(res.data.main.feels_like * 10) / 10,
-                                                        humidity: res.data.main.humidity,
-                                                        pressure: res.data.main.pressure,
-                                                        wind: Math.round(res.data.wind.speed * 10) / 10,
-                                                        description: res.data.weather[0].description,
-                                                        icon: res.data.weather[0].icon
+                                                        temp: Math.round(r.data.main.temp * 10) / 10,
+                                                        feels_like: Math.round(r.data.main.feels_like * 10) / 10,
+                                                        humidity: r.data.main.humidity,
+                                                        pressure: r.data.main.pressure,
+                                                        wind: Math.round(r.data.wind.speed * 10) / 10,
+                                                        description: r.data.weather[0].description,
+                                                        icon: r.data.weather[0].icon
                                                     }
                                                 }))
-                                                .catch(() => ({ [city]: { temp: null, error: 'Failed to fetch' } }))
+                                                .catch(() => ({ [city]: { temp: null, error: 'Failed to fetch'} }))
                                             )
                                         );
-                                        
+
                                         const cities_data = Object.assign({}, ...results);
-                                        const weatherData = {
+
+                                        fs.mkdirSync('./data', { recursive: true });
+                                        fs.writeFileSync('./data/weather.json', JSON.stringify({
                                             last_updated: new Date().toISOString(),
                                             cities: cities_data,
                                             metadata: {
@@ -99,110 +116,98 @@ pipeline {
                                                 successful: Object.values(cities_data).filter(c => c.temp !== null).length,
                                                 failed: Object.values(cities_data).filter(c => c.temp === null).length
                                             }
-                                        };
-                                        
-                                        fs.mkdirSync('./data', { recursive: true });
-                                        fs.writeFileSync('./data/weather.json', JSON.stringify(weatherData, null, 2));
+                                        }, null, 2));
+
                                         console.log('Weather data refreshed successfully');
                                     }
-                                    
-                                    fetchWeather().catch(err => {
-                                        console.error('Error:', err.message);
-                                        process.exit(0);
-                                    });
+
+                                    fetch();
                                 "
                             '''
                         }
                     }
                 }
-                echo 'Weather dataset refresh completed'
             }
         }
-        
+
+        /* ---------------------- BUILD DOCKER IMAGE ---------------------- */
         stage('Build Docker Image') {
             steps {
-                echo "Building Docker image with tag: ${IMAGE_TAG}"
+                echo "Building Docker image ${DOCKER_IMAGE}:${IMAGE_TAG}"
                 script {
-                    dockerImage = docker.build("${DOCKER_IMAGE}:${IMAGE_TAG}")
+                    def dockerImage = docker.build("${DOCKER_IMAGE}:${IMAGE_TAG}")
+
+                    // Also build latest
                     docker.build("${DOCKER_IMAGE}:latest")
                 }
             }
         }
-        
+
+        /* ---------------------- PUSH TO DOCKER ---------------------- */
         stage('Push to Docker Registry') {
             steps {
-                echo 'Pushing Docker images to registry...'
+                echo "Pushing image to Docker Hub..."
                 script {
-                    docker.withRegistry("https://${DOCKER_REGISTRY}", "${DOCKER_CREDENTIALS_ID}") {
-                        dockerImage.push("${IMAGE_TAG}")
-                        dockerImage.push("latest")
+                    docker.withRegistry("https://${DOCKER_REGISTRY}", DOCKER_CREDENTIALS_ID) {
+
+                        sh """
+                            docker tag ${DOCKER_IMAGE}:${IMAGE_TAG} ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${IMAGE_TAG}
+                            docker tag ${DOCKER_IMAGE}:latest ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:latest
+                            docker push ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${IMAGE_TAG}
+                            docker push ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:latest
+                        """
                     }
                 }
-                echo "Docker images pushed: ${IMAGE_TAG} and latest"
             }
         }
-        
+
+        /* ---------------------- DEPLOY TO MINIKUBE ---------------------- */
         stage('Deploy to Kubernetes') {
             steps {
-                echo 'Deploying to Kubernetes (Minikube)...'
-                withCredentials([file(credentialsId: "${KUBECONFIG_CREDENTIALS_ID}", variable: 'KUBECONFIG')]) {
+                echo "Deploying to Minikube..."
+                withCredentials([file(credentialsId: KUBECONFIG_CREDENTIALS_ID, variable: 'KUBECONFIG')]) {
+
                     sh '''
                         export KUBECONFIG=$KUBECONFIG
-                        kubectl version --client
-                        
-                        echo "Applying Kubernetes manifests..."
+
                         kubectl apply -f k8s/deployment.yaml
                         kubectl apply -f k8s/service.yaml
-                        
-                        echo "Updating deployment image..."
+
                         kubectl set image deployment/weather-app weather-app=${DOCKER_IMAGE}:${IMAGE_TAG} --record
-                        
-                        echo "Waiting for rollout to complete..."
+
                         kubectl rollout status deployment/weather-app --timeout=5m
-                        
-                        echo "Current deployment status:"
-                        kubectl get deployments
-                        kubectl get pods
-                        kubectl get services
                     '''
                 }
             }
         }
-        
+
+        /* ---------------------- VERIFY DEPLOY ---------------------- */
         stage('Verify Deployment') {
             steps {
-                echo 'Verifying deployment health...'
-                withCredentials([file(credentialsId: "${KUBECONFIG_CREDENTIALS_ID}", variable: 'KUBECONFIG')]) {
+                echo "Verifying deployment..."
+                withCredentials([file(credentialsId: KUBECONFIG_CREDENTIALS_ID, variable: 'KUBECONFIG')]) {
                     sh '''
                         export KUBECONFIG=$KUBECONFIG
-                        
-                        echo "Checking pod status..."
                         kubectl get pods -l app=weather-app
-                        
-                        echo "Checking service endpoints..."
-                        kubectl get endpoints weather-app-service
-                        
-                        echo "Deployment verification completed"
+                        kubectl get svc
                     '''
                 }
             }
         }
     }
-    
+
+    /* ---------------------- POST ACTIONS ---------------------- */
     post {
         success {
-            echo '✅ Pipeline completed successfully!'
-            echo "Deployed image: ${DOCKER_IMAGE}:${IMAGE_TAG}"
-            echo 'Weather dataset has been refreshed with live data'
-            echo 'Application is now running on Kubernetes'
+            echo "🎉 SUCCESS — Deployment Completed!"
+            echo "Image deployed: ${DOCKER_IMAGE}:${IMAGE_TAG}"
         }
         failure {
-            echo '❌ Pipeline failed!'
-            echo 'Check the logs above for error details'
+            echo "❌ Pipeline failed — check logs."
         }
         always {
-            echo 'Cleaning up workspace...'
             cleanWs()
         }
     }
 }
+
